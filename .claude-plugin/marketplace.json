@@ -1,0 +1,13 @@
+{
+  "name": "claude-statusbar",
+  "description": "Minimal colored status bar for Claude Code",
+  "owner": {
+    "name": "snehil"
+  },
+  "plugins": [
+    {
+      "name": "statusbar",
+      "source": "./"
+    }
+  ]
+}

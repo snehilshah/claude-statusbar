@@ -1,0 +1,1 @@
+{ "name": "statusbar", "version": "0.1.0", "description": "Minimal colored status bar: model, effort, context, rate limits, project path, vim mode", "author": { "name": "snehil" }, "types": "./types/index.d.ts" }
