@@ -5,9 +5,10 @@ import { SEP, fmtCountdown, fmtTokens, level, prettyModel, shortEffort, tildePat
 import type { Seg } from './format'
 import type { Effort } from '../types'
 
-// Idle refresh. It re-reads figures the engine already holds and makes no API
-// call, so it costs no usage; rate-limit % only moves when a real request reports it.
-const TICK_MS = 5 * 60_000
+// Idle refresh, once a minute so the reset countdowns stay current. It re-reads
+// figures the engine already holds and makes no API call, so it costs no usage;
+// rate-limit % only moves when a real request reports it.
+const TICK_MS = 60_000
 
 // What the bar draws. Module state: a reload starts it over and session.start refills it.
 const st = {
