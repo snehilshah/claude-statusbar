@@ -3,7 +3,7 @@ import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, 
 
 import { SEP, fmtCountdown, fmtTokens, level, prettyModel, shortEffort, tildePath, width } from './format'
 import type { Seg } from './format'
-import type { Effort } from '../types'
+import type { Effort, Fill } from '../types'
 
 // Idle refresh, once a minute so the reset countdowns stay current. It re-reads
 // figures the engine already holds and makes no API call, so it costs no usage;
@@ -14,7 +14,9 @@ const TICK_MS = 60_000
 const st = {
   model: '',
   effort: undefined as Effort | undefined,
-  ctx: undefined as SessionContextUsage | undefined,
+  // Sticky: the last known context fill, kept until a newer figure replaces it,
+  // so the bar never drops the value between API calls, compactions or reloads.
+  fill: null as Fill | null,
   limits: [] as readonly SessionRateLimit[],
   dir: '',
   now: 0,
@@ -26,11 +28,31 @@ const st = {
 // Session state, so the effort survives a reload of the mod (module state does not).
 const effortAtom = atom({ plugin: 'statusbar', key: 'effort' } as const, null as Effort | null)
 
+// Session state too: the fill survives a reload, so the bar has it at once.
+const fillAtom = atom({ plugin: 'statusbar', key: 'fill' } as const, null as Fill | null)
+
 const VIM_RE = /^-- ([A-Z]+(?: [A-Z]+)*) --\s*/
 
+// The reported fill wins; else the local estimate ("~"); else the last value stays.
+// Measured against the compaction window (autoCompactWindow) when known.
+async function setFill($: EngineInterface, ctx: SessionContextUsage): Promise<void> {
+  const b = ctx.breakdown
+  const window = b?.rawMaxTokens || st.fill?.window || ctx.window
+  const fill: Fill | null =
+    ctx.tokens !== undefined
+      ? { tokens: ctx.tokens, approx: false, window }
+      : b
+        ? { tokens: b.totalTokens, approx: true, window }
+        : st.fill && { ...st.fill, window }
+  if (!fill) return
+  st.fill = fill
+  await update($, fillAtom, () => fill)
+}
+
 async function refresh($: EngineInterface): Promise<void> {
-  const usage = await $.session.usage()
-  st.ctx = usage.context
+  // `summary` estimates locally: no API request, no usage.
+  const usage = await $.session.usage({ breakdown: 'summary' })
+  await setFill($, usage.context)
   st.limits = usage.rateLimits
   // root, not cwd: a shell `cd` during the session must not move the bar's path.
   st.dir = await $.session.root()
@@ -43,15 +65,19 @@ export const register: Register = on => {
     const started = await next(e)
     st.model = await $.session.model()
     st.effort = (await read($, effortAtom)) ?? undefined
+    st.fill = await read($, fillAtom)
     await refresh($)
     st.tick?.cancel()
     st.tick = $.clock.every(TICK_MS, () => void refresh($))
     return started
   })
 
-  on('session.measure', ($, e, next) => {
-    st.ctx = e.context
+  on('session.measure', async ($, e, next) => {
     st.limits = e.rateLimits
+    // No reported fill (just compacted or cleared): the last value stays until
+    // the local estimate lands.
+    if (e.context.tokens === undefined) void refresh($)
+    else await setFill($, e.context)
     $.ui.invalidate('ui.render')
     return next(e)
   })
@@ -93,19 +119,22 @@ export const register: Register = on => {
   )
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
-    const { model, effort, ctx, limits, dir, now } = st
+    const { model, effort, fill, limits, dir, now } = st
     if (e.props.hasSurvey || !model) return next(e)
     const { Box, Text } = $.ui.resolve(e)
 
     // Group 1: what the model is and how full its window is.
     const head: Seg[] = [{ text: prettyModel(model), color: 'cyan', bold: true }]
     if (effort !== undefined) head.push({ text: shortEffort(effort), color: 'yellow' })
-    if (ctx?.tokens !== undefined) {
-      head.push({
-        text: `ctx ${fmtTokens(ctx.tokens)}/${fmtTokens(ctx.window)}`,
-        color: level(ctx.percent ?? 0),
-      })
-    }
+    // Always drawn: the last known fill ("~" = local estimate), "–" before any.
+    head.push(
+      fill
+        ? {
+            text: `ctx ${fill.approx ? '~' : ''}${fmtTokens(fill.tokens)}/${fmtTokens(fill.window)}`,
+            color: level((fill.tokens / fill.window) * 100),
+          }
+        : { text: 'ctx –', dim: true },
+    )
 
     // Group 2: where we are.
     const place: Seg[] = dir ? [{ text: tildePath(dir), dim: true, shrink: true }] : []
