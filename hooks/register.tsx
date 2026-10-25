@@ -17,6 +17,9 @@ const st = {
   // Sticky: the last known context fill, kept until a newer figure replaces it,
   // so the bar never drops the value between API calls, compactions or reloads.
   fill: null as Fill | null,
+  // From a compaction until a new response reports a fill: the engine's reported
+  // figure is still the pre-compaction one, so only local estimates count.
+  compacted: false,
   limits: [] as readonly SessionRateLimit[],
   dir: '',
   now: 0,
@@ -39,7 +42,7 @@ async function setFill($: EngineInterface, ctx: SessionContextUsage): Promise<vo
   const b = ctx.breakdown
   const window = b?.rawMaxTokens || st.fill?.window || ctx.window
   const fill: Fill | null =
-    ctx.tokens !== undefined
+    ctx.tokens !== undefined && !st.compacted
       ? { tokens: ctx.tokens, approx: false, window }
       : b
         ? { tokens: b.totalTokens, approx: true, window }
@@ -75,9 +78,12 @@ export const register: Register = on => {
   on('session.measure', async ($, e, next) => {
     st.limits = e.rateLimits
     // No reported fill (just compacted or cleared): the last value stays until
-    // the local estimate lands.
+    // the local estimate lands. A reported one comes from a fresh response.
     if (e.context.tokens === undefined) void refresh($)
-    else await setFill($, e.context)
+    else {
+      st.compacted = false
+      await setFill($, e.context)
+    }
     $.ui.invalidate('ui.render')
     return next(e)
   })
@@ -94,6 +100,24 @@ export const register: Register = on => {
       }
     }
     return yield* next(e)
+  })
+
+  // /compact is not a turn, so no session.measure follows it: update the fill
+  // here instead of waiting for the next response.
+  on('session.compact', async ($, e, next) => {
+    const result = await next(e)
+    if (e.agentId !== undefined || e.trigger === 'precompute' || result.skip !== undefined) return result
+    st.compacted = true
+    const window = st.fill?.window
+    if (result.tokensAfter !== undefined && window) {
+      const fill: Fill = { tokens: result.tokensAfter, approx: true, window }
+      st.fill = fill
+      await update($, fillAtom, () => fill)
+      $.ui.invalidate('ui.render')
+    }
+    // The new transcript is installed after this hook returns; estimate it then.
+    $.clock.after(1000, () => void refresh($))
+    return result
   })
 
   on('turn.complete', async ($, e, next) => {
