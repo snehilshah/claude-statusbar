@@ -10,6 +10,12 @@ import type { Effort, Fill } from '../types'
 // rate-limit % only moves when a real request reports it.
 const TICK_MS = 60_000
 
+// Quick check, every few seconds, of two figures that are free to read: the
+// session id and the reported fill. Commands that swap or shrink the
+// conversation (an in-session /resume, /clear, a rewind) fire no event the bar
+// sees, so this is what catches them within seconds, not at the next response.
+const CHECK_MS = 3_000
+
 // What the bar draws. Module state: a reload starts it over and session.start refills it.
 const st = {
   model: '',
@@ -24,6 +30,9 @@ const st = {
   dir: '',
   now: 0,
   tick: undefined as Timer | undefined,
+  check: undefined as Timer | undefined,
+  // `<session id> <reported tokens>` at the last quick check.
+  seen: '',
   // '' until the hint line first shows a vim mode (vim off: never).
   vim: '',
 }
@@ -63,6 +72,18 @@ async function refresh($: EngineInterface): Promise<void> {
   $.ui.invalidate('ui.render')
 }
 
+// Refreshes when the session id or the reported fill moved since the last look.
+// A new id is another conversation: what the bar kept for the old one goes.
+async function check($: EngineInterface): Promise<void> {
+  const [id, usage] = await Promise.all([$.session.id(), $.session.usage()])
+  const seen = `${id} ${usage.context.tokens}`
+  if (seen === st.seen) return
+  const swapped = st.seen !== '' && !st.seen.startsWith(`${id} `)
+  st.seen = seen
+  if (swapped) st.compacted = false
+  await refresh($)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -72,6 +93,9 @@ export const register: Register = on => {
     await refresh($)
     st.tick?.cancel()
     st.tick = $.clock.every(TICK_MS, () => void refresh($))
+    st.seen = ''
+    st.check?.cancel()
+    st.check = $.clock.every(CHECK_MS, () => void check($))
     return started
   })
 
@@ -108,15 +132,29 @@ export const register: Register = on => {
     const result = await next(e)
     if (e.agentId !== undefined || e.trigger === 'precompute' || result.skip !== undefined) return result
     st.compacted = true
-    const window = st.fill?.window
-    if (result.tokensAfter !== undefined && window) {
-      const fill: Fill = { tokens: result.tokensAfter, approx: true, window }
-      st.fill = fill
-      await update($, fillAtom, () => fill)
-      $.ui.invalidate('ui.render')
-    }
-    // The new transcript is installed after this hook returns; estimate it then.
+    // Not `tokensAfter`: it counts the summary alone, without the system prompt
+    // and tools. The new transcript is installed after this hook returns:
+    // estimate it then.
     $.clock.after(1000, () => void refresh($))
+    return result
+  })
+
+  // A slash command may change what the bar shows (/model, /clear, /resume,
+  // /rewind, /mcp, /config...): look again when it returns, and once more just
+  // after, as a picker or a swapped transcript lands a moment later.
+  on('command.run', async ($, e, next) => {
+    const result = await next(e)
+    void refresh($)
+    $.clock.after(1000, () => void check($))
+    return result
+  })
+
+  // /model (or a fallback) changes the name and the window at once, not at the
+  // next request.
+  on('classic.PostModelSwitch', async ($, e, next) => {
+    const result = await next(e)
+    st.model = e.to_model
+    void refresh($)
     return result
   })
 
