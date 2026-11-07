@@ -5,6 +5,7 @@ import {
   fmtTokens,
   level,
   prettyModel,
+  shortVim,
   tildePath,
   width,
 } from '../hooks/format'
@@ -28,6 +29,15 @@ describe('format', () => {
     expect(level(10)).toBe('success')
     expect(level(60)).toBe('warning')
     expect(level(90)).toBe('error')
+  })
+
+  test('vim modes are 3-letter tags', async () => {
+    for (const mode of ['INSERT', 'NORMAL', 'VISUAL', 'VISUAL LINE', 'REPLACE', 'OPERATOR PENDING']) {
+      expect(shortVim(mode)).toHaveLength(3)
+    }
+    expect(shortVim('INSERT')).toBe('INS')
+    expect(shortVim('NORMAL')).toBe('NOR')
+    expect(shortVim('VISUAL LINE')).toBe('VLN')
   })
 
   test('paths and widths', async () => {

@@ -46,6 +46,15 @@ export const prettyModel = (id: string): string => {
 export const shortEffort = (e: string | number): string =>
   e === 'medium' ? 'med' : `${e}`
 
+// Vim mode as a 3-letter tag, so switching modes never shifts the bar:
+// INSERT -> INS, NORMAL -> NOR, VISUAL -> VIS, VISUAL LINE -> VLN.
+const VIM_TAGS: Record<string, string> = { INSERT: 'INS', NORMAL: 'NOR', VISUAL: 'VIS', 'VISUAL LINE': 'VLN', REPLACE: 'REP' }
+export const shortVim = (mode: string): string => VIM_TAGS[mode] ?? mode.slice(0, 3)
+
+// Each tag's color: insert green, normal blue, visual yellow.
+export const vimColor = (mode: string): string =>
+  mode === 'INSERT' ? 'success' : mode.startsWith('VISUAL') ? 'warning' : 'suggestion'
+
 // /home/me/x -> ~/x, /Users/me/x -> ~/x
 export const tildePath = (p: string): string =>
   p.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, '~')

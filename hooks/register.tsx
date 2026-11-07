@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, Timer } from 'claude-code'
 
-import { SEP, fmtCountdown, fmtTokens, level, prettyModel, shortEffort, tildePath, width } from './format'
+import { SEP, fmtCountdown, fmtTokens, level, prettyModel, shortEffort, shortVim, tildePath, vimColor, width } from './format'
 import type { Seg } from './format'
 import type { Effort, Fill } from '../types'
 
@@ -165,7 +165,14 @@ export const register: Register = on => {
   })
 
   // Vim mode: the engine leads the hint line with "-- INSERT -- " and drops it in
-  // NORMAL, shifting the line. Strip it there; show the mode on the right instead.
+  // NORMAL. Strip it, and show the mode at the right of the footer instead. Once
+  // vim is seen the hint is always handed back rewritten: the engine draws a
+  // rewritten line with a " · " after its pills and its own line without, so
+  // rewriting in INSERT alone still shifted the line. The trailing space keeps
+  // the NORMAL rewrite from reading as unchanged (an identical hint is drawn as
+  // the engine's own). Always rewriting also stops the engine's raw line
+  // ("-- INSERT -- ...") flashing before this answer lands: it keeps the last
+  // answer's row only while that answer was a rewrite.
   on('ui.render', { component: 'PromptHint' }, ($, e, next) => {
     const m = VIM_RE.exec(e.props.hint)
     const vim = m ? m[1]! : st.vim && 'NORMAL'
@@ -173,12 +180,25 @@ export const register: Register = on => {
       st.vim = vim
       $.ui.invalidate('ui.render')
     }
-    return m ? next({ ...e, props: { ...e.props, hint: e.props.hint.slice(m[0].length) } }) : next(e)
+    if (!vim) return next(e)
+    return next({ ...e, props: { ...e.props, hint: `${m ? e.props.hint.slice(m[0].length) : e.props.hint} ` } })
   })
 
-  on('ui.render', { component: 'SessionMode' }, ($, e, next) =>
-    st.vim ? next({ ...e, props: { ...e.props, modes: [...e.props.modes, st.vim] } }) : next(e),
-  )
+  // The vim tag at the right of the footer, after any other mode labels: a
+  // 3-letter colored tag, so a switch never shifts the line.
+  on('ui.render', { component: 'SessionMode' }, ($, e, next) => {
+    if (!st.vim) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const { modes } = e.props
+    return (
+      <Box flexDirection="row">
+        {modes.length > 0 && <Text dimColor>{`${modes.join(' & ')} & `}</Text>}
+        <Text color={vimColor(st.vim)} bold>
+          {shortVim(st.vim)}
+        </Text>
+      </Box>
+    )
+  })
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
     const { model, effort, fill, limits, dir, now } = st

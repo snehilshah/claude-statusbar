@@ -8,7 +8,7 @@ Opus 5.5 · high · ctx 89k/1M · ~/project                 12% 2h14m · 40% 4d3
 
 - Model and effort, context fill against the auto-compact window (green / yellow at 60% / red at 85%; `~` = local estimate before the first response), project path.
 - 5-hour and 7-day rate limits with reset countdowns; a % from before its window reset is dimmed.
-- Vim mode moved from the left of the hint line to the right footer, so the line no longer shifts.
+- Vim mode as a colored 3-letter tag at the right of the footer (`INS` / `NOR` / `VIS`), taken off the hint line so switching modes no longer shifts or flickers it.
 - Refreshes every minute, and within seconds after `/resume`, `/clear`, `/compact` or any other command, from figures Claude Code already holds: no API calls, no usage.
 
 ## Install

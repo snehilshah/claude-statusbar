@@ -41,6 +41,14 @@ function engine(on: On, world: World = { id: 's1', estimate: 23_000 }) {
 
 const measure = (context: SessionContextUsage) => ({ context, rateLimits: [], changed: ['context' as const] })
 
+// The bar's row as one string: its Texts joined in order.
+async function bar($: Engine): Promise<string> {
+  const ui = await $.ui.mount(BAR)
+  const texts = await ui.findAll({ type: 'Text' })
+  await ui.unmount()
+  return texts.map(t => t.text).join('')
+}
+
 async function ctx($: Engine): Promise<string | undefined> {
   const ui = await $.ui.mount(BAR)
   const text = (await ui.find({ type: 'Text', text: /^ctx / }))?.text
@@ -117,5 +125,58 @@ test('a slash command refreshes the bar when it returns', async ($, on) => {
   })
   await clock.settle()
   expect(await ctx($)).toBe('ctx 40k/500k')
+  await clock.settle()
+})
+
+const HINT = {
+  plugin: 'statusbar',
+  component: 'PromptHint',
+  surface: 'terminal',
+  props: { isDraft: false, isWorking: false, hint: '' },
+} as const
+
+const MODES = {
+  plugin: 'statusbar',
+  component: 'SessionMode',
+  surface: 'terminal',
+  props: { modes: [] as readonly string[] },
+} as const
+
+test('the vim mode is a tag at the right of the footer, and the hint line keeps its shape', async ($, on) => {
+  const clock = engine(on)
+  // Stand for the engine drawing what it is handed.
+  on('ui.render', { component: 'PromptHint' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>{e.props.hint}</Text>
+  })
+  on('ui.render', { component: 'SessionMode' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>{e.props.modes.join(' & ')}</Text>
+  })
+  await start($)
+
+  const hint = async (text: string) => {
+    const ui = await $.ui.mount({ ...HINT, props: { ...HINT.props, hint: text } })
+    const shown = (await ui.find({ type: 'Text' }))?.text
+    await ui.unmount()
+    return shown
+  }
+  const modes = async (labels: readonly string[] = []) => {
+    const ui = await $.ui.mount({ ...MODES, props: { modes: labels } })
+    const shown = (await ui.findAll({ type: 'Text' })).map(t => t.text).join('')
+    await ui.unmount()
+    return shown
+  }
+
+  // Vim off: nothing added.
+  expect(await hint('? for shortcuts')).toBe('? for shortcuts')
+  expect(await modes()).toBe('')
+
+  // The same hint line in both modes; the tag on the right.
+  expect(await hint('-- INSERT -- (shift+tab to cycle)')).toBe('(shift+tab to cycle) ')
+  expect(await modes()).toBe('INS')
+  expect(await hint('(shift+tab to cycle)')).toBe('(shift+tab to cycle) ')
+  expect(await modes(['focus'])).toBe('focus & NOR')
+  expect(await bar($)).toMatch(/^Opus 5\.5/)
   await clock.settle()
 })
