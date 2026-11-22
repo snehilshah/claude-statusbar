@@ -6,7 +6,7 @@ A minimal, colored status bar mod for Claude Code, drawn above the prompt:
 Opus 5.5 · high · ctx 89k/1M · ~/project                 12% 2h14m · 40% 4d3h
 ```
 
-- Model and effort, context fill against the auto-compact window (green / yellow at 60% / red at 85%; `~` = local estimate before the first response), project path.
+- Model and effort (from your settings until a response reports it), context fill against the auto-compact window (green / yellow at 60% / red at 85%; `~` = local estimate before the first response), project path.
 - 5-hour and 7-day rate limits with reset countdowns; a % from before its window reset is dimmed.
 - Vim mode as a colored 3-letter tag at the right of the footer (`INS` / `NOR` / `VIS`), taken off the hint line so switching modes no longer shifts or flickers it.
 - Refreshes every minute, and within seconds after `/resume`, `/clear`, `/compact` or any other command, from figures Claude Code already holds: no API calls, no usage.
@@ -29,3 +29,7 @@ claude plugin update statusbar@claude-statusbar
 ## Develop
 
 `claude plugin validate .` · `claude plugin test .` · `tsc -p .`
+
+## Open
+
+Developed for CLI use, not intended for desktop or vscode, Desktop and VSCode already add this line hence this looks like noise, still considering if this plugin can be improved for vscode and desktop, happy to hear feedback :)

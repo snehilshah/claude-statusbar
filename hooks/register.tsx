@@ -43,6 +43,8 @@ const effortAtom = atom({ plugin: 'statusbar', key: 'effort' } as const, null as
 // Session state too: the fill survives a reload, so the bar has it at once.
 const fillAtom = atom({ plugin: 'statusbar', key: 'fill' } as const, null as Fill | null)
 
+const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
+
 const VIM_RE = /^-- ([A-Z]+(?: [A-Z]+)*) --\s*/
 
 // The reported fill wins; else the local estimate ("~"); else the last value stays.
@@ -59,6 +61,34 @@ async function setFill($: EngineInterface, ctx: SessionContextUsage): Promise<vo
   if (!fill) return
   st.fill = fill
   await update($, fillAtom, () => fill)
+}
+
+// The effort the session is set to, before any request reports one: the
+// CLAUDE_CODE_EFFORT_LEVEL variable, else the model's `modelSettings` entry
+// (keyed by id; a dated or `[1m]` id matches its base), else `effortLevel`.
+async function configuredEffort($: EngineInterface, model: string): Promise<Effort | undefined> {
+  const env = await $.env.get('CLAUDE_CODE_EFFORT_LEVEL')
+  if (env === 'auto' || env === 'unset') return undefined
+  if (env) return env
+  const s = await $.settings.read()
+  const ok = (v: unknown): v is Effort => typeof v === 'string' || typeof v === 'number'
+  const per = s.modelSettings
+  if (per && typeof per === 'object') {
+    const id = model.replace(/\[.*\]$/, '')
+    const key = Object.keys(per)
+      .filter(k => id === k || id.startsWith(`${k}-`))
+      .sort((a, b) => b.length - a.length)[0]
+    const level = key && (per as Record<string, { effortLevel?: unknown } | undefined>)[key]?.effortLevel
+    if (ok(level)) return level
+  }
+  return ok(s.effortLevel) ? s.effortLevel : undefined
+}
+
+async function setEffort($: EngineInterface, effort: Effort | undefined): Promise<void> {
+  if (effort === st.effort) return
+  st.effort = effort
+  await update($, effortAtom, () => effort ?? null)
+  $.ui.invalidate('ui.render')
 }
 
 async function refresh($: EngineInterface): Promise<void> {
@@ -88,7 +118,9 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     st.model = await $.session.model()
-    st.effort = (await read($, effortAtom)) ?? undefined
+    // Kept from earlier in this session, else the settings: a new or resumed
+    // session has made no request to report one yet.
+    st.effort = (await read($, effortAtom)) ?? (await configuredEffort($, st.model))
     st.fill = await read($, fillAtom)
     await refresh($)
     st.tick?.cancel()
@@ -113,15 +145,15 @@ export const register: Register = on => {
   })
 
   on('turn.step', async function* ($, e, next) {
-    // Main loop only; a request without effort keeps the last one unless the model changed.
+    // Main loop only. A request without effort (a compaction's) keeps the last
+    // one, or the settings' for a model the bar has not shown.
     if (e.agentId === undefined) {
-      const effort = e.effort ?? (e.model === st.model ? st.effort : undefined)
-      if (e.model !== st.model || effort !== st.effort) {
+      const effort = e.effort ?? (e.model === st.model ? st.effort : await configuredEffort($, e.model))
+      if (e.model !== st.model) {
         st.model = e.model
-        st.effort = effort
-        await update($, effortAtom, () => effort ?? null)
         $.ui.invalidate('ui.render')
       }
+      await setEffort($, effort)
     }
     return yield* next(e)
   })
@@ -144,6 +176,9 @@ export const register: Register = on => {
   // after, as a picker or a swapped transcript lands a moment later.
   on('command.run', async ($, e, next) => {
     const result = await next(e)
+    // `/effort <level>` sets it without a request to report it.
+    const level = e.args.trim()
+    if (e.command === 'effort' && LEVELS.includes(level)) await setEffort($, level)
     void refresh($)
     $.clock.after(1000, () => void check($))
     return result
@@ -154,6 +189,7 @@ export const register: Register = on => {
   on('classic.PostModelSwitch', async ($, e, next) => {
     const result = await next(e)
     st.model = e.to_model
+    await setEffort($, await configuredEffort($, e.to_model))
     void refresh($)
     return result
   })

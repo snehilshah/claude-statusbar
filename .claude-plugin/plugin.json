@@ -1,6 +1,6 @@
 {
   "name": "statusbar",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Minimal colored status bar: model, effort, context, rate limits, project path, vim mode",
   "author": {
     "name": "snehil"

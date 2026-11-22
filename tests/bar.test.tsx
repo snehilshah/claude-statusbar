@@ -26,6 +26,10 @@ function engine(on: On, world: World = { id: 's1', estimate: 23_000 }) {
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.root', () => ({ value: '/tmp/x' }))
   on('session.id', () => ({ value: world.id }))
+  on('env.get', () => ({ value: undefined }))
+  on('settings.read', () => ({
+    value: { effortLevel: 'medium', modelSettings: { 'claude-opus-5-5': { effortLevel: 'high' } } },
+  }))
   on('classic.PostModelSwitch', () => ({}))
   on('session.measure', (_, e) => ({ changed: e.changed }))
   on('command.run', () => ({ text: '' }))
@@ -125,6 +129,40 @@ test('a slash command refreshes the bar when it returns', async ($, on) => {
   })
   await clock.settle()
   expect(await ctx($)).toBe('ctx 40k/500k')
+  await clock.settle()
+})
+
+const step = async ($: Engine, model: string, effort?: 'low' | 'high' | 'max') => {
+  const s = $.turn.step({ turnId: 't', index: 0, model, effort, messageCount: 1 })
+  for await (const _ of s);
+}
+
+test('the effort shows from the settings before any request, and survives a compaction', async ($, on) => {
+  const clock = engine(on)
+  on('turn.step', async function* (_, e) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: null }
+  })
+  await start($)
+  expect(await bar($)).toMatch(/^Opus 5\.5 · high · ctx/)
+
+  // A compaction's request: another spelling of the model, no effort.
+  await step($, 'claude-opus-5-5-20261101')
+  expect(await bar($)).toMatch(/^Opus 5\.5 · high · ctx/)
+
+  // A request reports the level it ran at.
+  await step($, 'claude-opus-5-5', 'max')
+  expect(await bar($)).toMatch(/^Opus 5\.5 · max · ctx/)
+
+  // /effort <level> shows at once; a model without an entry takes effortLevel.
+  await $.command.run({
+    command: 'effort',
+    args: 'low',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 120 },
+  })
+  expect(await bar($)).toMatch(/^Opus 5\.5 · low · ctx/)
+  await $.classic.PostModelSwitch({ from_model: 'claude-opus-5-5', to_model: 'claude-sonnet-5-5' } as never)
+  expect(await bar($)).toMatch(/^Sonnet 5\.5 · med · ctx/)
   await clock.settle()
 })
 
